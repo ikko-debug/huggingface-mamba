@@ -60,6 +60,13 @@ if is_flash_attn_2_available():
 
 
 logger = logging.get_logger(__name__)
+# 配置日志记录
+import logging as loggingg
+loggingg.basicConfig(
+    filename="bart_timing.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+)
 
 _CHECKPOINT_FOR_DOC = "facebook/bart-base"
 _CONFIG_FOR_DOC = "BartConfig"
@@ -176,59 +183,68 @@ class BartAttention(nn.Module):
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
+        import time
+        import logging as loggingg
 
-        # if key_value_states are provided this layer is used as a cross-attention layer
-        # for the decoder
         is_cross_attention = key_value_states is not None
-
         bsz, tgt_len, _ = hidden_states.size()
+        loggingg.info(f"Input hidden_states shape: {hidden_states.shape}")
+        if is_cross_attention:
+            loggingg.info(f"Key_value_states shape: {key_value_states.shape}")
 
-        # get query proj
+        # Time query projection
+        start_time = time.time()
         query_states = self.q_proj(hidden_states) * self.scaling
-        # get key, value proj
-        # `past_key_value[0].shape[2] == key_value_states.shape[1]`
-        # is checking that the `sequence_length` of the `past_key_value` is the same as
-        # the provided `key_value_states` to support prefix tuning
+        loggingg.info(f"q_proj time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Query_states shape after q_proj: {query_states.shape}")
+
+        # Time key/value projections
+        start_time = time.time()
         if (
             is_cross_attention
             and past_key_value is not None
             and past_key_value[0].shape[2] == key_value_states.shape[1]
         ):
-            # reuse k,v, cross_attentions
             key_states = past_key_value[0]
             value_states = past_key_value[1]
+            loggingg.info(f"Using past_key_value - Key_states shape: {key_states.shape}, Value_states shape: {value_states.shape}")
         elif is_cross_attention:
-            # cross_attentions
             key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
             value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
+            loggingg.info(f"Cross-attention - Key_states shape: {key_states.shape}, Value_states shape: {value_states.shape}")
         elif past_key_value is not None:
-            # reuse k, v, self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
+            loggingg.info(f"Self-attention with past - Key_states shape: {key_states.shape}, Value_states shape: {value_states.shape}")
         else:
-            # self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            loggingg.info(f"Self-attention - Key_states shape: {key_states.shape}, Value_states shape: {value_states.shape}")
+        loggingg.info(f"k_v_proj time: {time.time() - start_time:.6f}s")
 
         if self.is_decoder:
-            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
-            # Further calls to cross_attention layer can then reuse all cross-attention
-            # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
-            # all previous decoder key/value_states. Further calls to uni-directional self-attention
-            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
-            # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states, value_states)
 
+        # Time attention reshaping
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
+        start_time = time.time()
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
         key_states = key_states.reshape(*proj_shape)
         value_states = value_states.reshape(*proj_shape)
+        loggingg.info(f"attention_reshape time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Reshaped Query_states shape: {query_states.shape}")
+        loggingg.info(f"Reshaped Key_states shape: {key_states.shape}")
+        loggingg.info(f"Reshaped Value_states shape: {value_states.shape}")
 
         src_len = key_states.size(1)
+        
+        # Time attention weights computation
+        start_time = time.time()
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+        loggingg.info(f"attn_weights_compute time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Attn_weights shape: {attn_weights.shape}")
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
             raise ValueError(
@@ -236,53 +252,60 @@ class BartAttention(nn.Module):
                 f" {attn_weights.size()}"
             )
 
+        # Time attention mask application
+        start_time = time.time()
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, tgt_len, src_len):
                 raise ValueError(
                     f"Attention mask should be of size {(bsz, 1, tgt_len, src_len)}, but is {attention_mask.size()}"
                 )
+            loggingg.info(f"Attention_mask shape: {attention_mask.shape}")
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+        loggingg.info(f"attn_mask time: {time.time() - start_time:.6f}s")
 
+        # Time softmax
+        start_time = time.time()
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        loggingg.info(f"softmax time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Attn_weights shape after softmax: {attn_weights.shape}")
 
+        # Time layer head mask and dropout
+        start_time = time.time()
         if layer_head_mask is not None:
             if layer_head_mask.size() != (self.num_heads,):
                 raise ValueError(
                     f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
                     f" {layer_head_mask.size()}"
                 )
+            loggingg.info(f"Layer_head_mask shape: {layer_head_mask.shape}")
             attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         if output_attentions:
-            # this operation is a bit awkward, but it's required to
-            # make sure that attn_weights keeps its gradient.
-            # In order to do so, attn_weights have to be reshaped
-            # twice and have to be reused in the following
             attn_weights_reshaped = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights_reshaped.view(bsz * self.num_heads, tgt_len, src_len)
         else:
             attn_weights_reshaped = None
 
         attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+        loggingg.info(f"head_mask_dropout time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Attn_probs shape after dropout: {attn_probs.shape}")
 
+        # Time attention output computation
+        start_time = time.time()
         attn_output = torch.bmm(attn_probs, value_states)
-
-        if attn_output.size() != (bsz * self.num_heads, tgt_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz * self.num_heads, tgt_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
-
         attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
         attn_output = attn_output.transpose(1, 2)
-
-        # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
-        # partitioned across GPUs when using tensor-parallelism.
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
+        loggingg.info(f"attn_output_compute time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Attn_output shape: {attn_output.shape}")
 
+        # Time output projection
+        start_time = time.time()
         attn_output = self.out_proj(attn_output)
+        loggingg.info(f"out_proj time: {time.time() - start_time:.6f}s")
+        loggingg.info(f"Final attn_output shape: {attn_output.shape}")
 
         return attn_output, attn_weights_reshaped, past_key_value
 
@@ -425,107 +448,63 @@ class BartSdpaAttention(BartAttention):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
         if output_attentions or layer_head_mask is not None:
-            # TODO: Improve this warning with e.g. `model.config._attn_implementation = "manual"` once this is implemented.
-            logger.warning_once(
-                "BartModel is using BartSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True` or `layer_head_mask` not None. Falling back to the manual attention"
-                ' implementation, but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-            )
-            return super().forward(
-                hidden_states,
-                key_value_states=key_value_states,
-                past_key_value=past_key_value,
-                attention_mask=attention_mask,
-                layer_head_mask=layer_head_mask,
-                output_attentions=output_attentions,
-            )
+            return super().forward(hidden_states, key_value_states, past_key_value, attention_mask, layer_head_mask, output_attentions)
 
-        # if key_value_states are provided this layer is used as a cross-attention layer
-        # for the decoder
         is_cross_attention = key_value_states is not None
-
         bsz, tgt_len, _ = hidden_states.size()
 
-        # get query proj
+        # 计时查询投影
+        start_time = time.time()
         query_states = self.q_proj(hidden_states)
-        # get key, value proj
-        # `past_key_value[0].shape[2] == key_value_states.shape[1]`
-        # is checking that the `sequence_length` of the `past_key_value` is the same as
-        # the provided `key_value_states` to support prefix tuning
-        if (
-            is_cross_attention
-            and past_key_value is not None
-            and past_key_value[0].shape[2] == key_value_states.shape[1]
-        ):
-            # reuse k,v, cross_attentions
+        loggingg.info(f"q_proj time: {time.time() - start_time:.6f}s")
+
+        # 计时键/值投影
+        start_time = time.time()
+        if is_cross_attention and past_key_value is not None and past_key_value[0].shape[2] == key_value_states.shape[1]:
             key_states = past_key_value[0]
             value_states = past_key_value[1]
         elif is_cross_attention:
-            # cross_attentions
             key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
             value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
         elif past_key_value is not None:
-            # reuse k, v, self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
-            # self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+        loggingg.info(f"k_v_proj time: {time.time() - start_time:.6f}s")
 
         if self.is_decoder:
-            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
-            # Further calls to cross_attention layer can then reuse all cross-attention
-            # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
-            # all previous decoder key/value_states. Further calls to uni-directional self-attention
-            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
-            # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states, value_states)
 
+        # 计时注意力计算
+        start_time = time.time()
         query_states = self._shape(query_states, tgt_len, bsz)
-
-        # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
-        # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
-        # The tgt_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case tgt_len == 1.
         is_causal = True if self.is_causal and attention_mask is None and tgt_len > 1 else False
-
-        # NOTE: SDPA with memory-efficient backend is currently (torch==2.1.2) bugged when using non-contiguous inputs and a custom attn_mask,
-        # but we are fine here as `_shape` do call `.contiguous()`. Reference: https://github.com/pytorch/pytorch/issues/112577
         attn_output = torch.nn.functional.scaled_dot_product_attention(
-            query_states,
-            key_states,
-            value_states,
-            attn_mask=attention_mask,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=is_causal,
+            query_states, key_states, value_states, attn_mask=attention_mask,
+            dropout_p=self.dropout if self.training else 0.0, is_causal=is_causal,
         )
+        loggingg.info(f"sdpa_compute time: {time.time() - start_time:.6f}s")
 
-        if attn_output.size() != (bsz, self.num_heads, tgt_len, self.head_dim):
-            raise ValueError(
-                f"`attn_output` should be of size {(bsz, self.num_heads, tgt_len, self.head_dim)}, but is"
-                f" {attn_output.size()}"
-            )
-
-        attn_output = attn_output.transpose(1, 2)
-
-        # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
-        # partitioned across GPUs when using tensor-parallelism.
-        attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
-
+        # 计时输出投影
+        start_time = time.time()
+        attn_output = attn_output.transpose(1, 2).reshape(bsz, tgt_len, self.embed_dim)
         attn_output = self.out_proj(attn_output)
+        loggingg.info(f"out_proj time: {time.time() - start_time:.6f}s")
 
         return attn_output, None, past_key_value
 
 
 BART_ATTENTION_CLASSES = {
     "eager": BartAttention,
-    "sdpa": BartSdpaAttention,
+    #"sdpa": BartSdpaAttention,
+    "sdpa": BartAttention,
     "flash_attention_2": BartFlashAttention2,
 }
-
-
+import time
 class BartEncoderLayer(nn.Module):
     def __init__(self, config: BartConfig):
         super().__init__()
@@ -563,6 +542,8 @@ class BartEncoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
         """
+        # Attention 处理
+        start_time1 = time.time()
         residual = hidden_states
         hidden_states, attn_weights, _ = self.self_attn(
             hidden_states=hidden_states,
@@ -570,31 +551,38 @@ class BartEncoderLayer(nn.Module):
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
         )
+        
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        attention_time = time.time() - start_time1
+        loggingg.info(f"Attention time: {attention_time:.6f}s")
+
+        start_time2 = time.time()
         hidden_states = residual + hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
+        addnorm_time = time.time() - start_time2
+        loggingg.info(f"Add&Norm time: {addnorm_time:.6f}s")
 
+        # 前馈网络处理
+        start_time3 = time.time()
         residual = hidden_states
         hidden_states = self.activation_fn(self.fc1(hidden_states))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        feedforward_time = time.time() - start_time3
+        loggingg.info(f"Feedforward time: {feedforward_time:.6f}s")
+        start_time4 = time.time()
         hidden_states = residual + hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
+        addnorm_time = time.time() - start_time4
+        loggingg.info(f"Add&Norm time: {addnorm_time:.6f}s")
 
-        if hidden_states.dtype == torch.float16 and (
-            torch.isinf(hidden_states).any() or torch.isnan(hidden_states).any()
-        ):
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
+        # 返回结果
         outputs = (hidden_states,)
-
         if output_attentions:
             outputs += (attn_weights,)
 
         return outputs
-
 
 class BartDecoderLayer(nn.Module):
     def __init__(self, config: BartConfig):
@@ -627,6 +615,7 @@ class BartDecoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
+        
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
@@ -656,8 +645,11 @@ class BartDecoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
         """
+        #print(f"Decoder self_attn class: {self.self_attn.__class__.__name__}")
+        # attention处理
+        start_time1 = time.time()
         residual = hidden_states
-
+        
         # Self Attention
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -669,9 +661,19 @@ class BartDecoderLayer(nn.Module):
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
         )
+
+        
+
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        attention_time = time.time() - start_time1
+        loggingg.info(f"Attention time: {attention_time:.6f}s")
+
+        start_time2 = time.time()
         hidden_states = residual + hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
+
+        addnorm_time = time.time() - start_time2
+        loggingg.info(f"Add&Norm time: {addnorm_time:.6f}s")
 
         # Cross-Attention Block
         cross_attn_present_key_value = None
@@ -695,15 +697,21 @@ class BartDecoderLayer(nn.Module):
 
             # add cross-attn to positions 3,4 of present_key_value tuple
             present_key_value = present_key_value + cross_attn_present_key_value
-
+        start_time3 = time.time()
         # Fully Connected
         residual = hidden_states
         hidden_states = self.activation_fn(self.fc1(hidden_states))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+        feedforward_time = time.time() - start_time3
+        loggingg.info(f"Feedforward time: {feedforward_time:.6f}s")
+
+        start_time4 = time.time()
         hidden_states = residual + hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
+        addnorm_time = time.time() - start_time4
+        loggingg.info(f"Add&Norm time: {addnorm_time:.6f}s")
 
         outputs = (hidden_states,)
 
@@ -962,6 +970,7 @@ class BartEncoder(BartPreTrainedModel):
         self.layerdrop = config.encoder_layerdrop
 
         embed_dim = config.d_model
+        #print(config._attn_implementation)
         self.padding_idx = config.pad_token_id
         self.max_source_positions = config.max_position_embeddings
         embed_scale = math.sqrt(embed_dim) if config.scale_embedding else 1.0
@@ -1054,12 +1063,14 @@ class BartEncoder(BartPreTrainedModel):
             input = inputs_embeds[:, :, -1]
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
-
+        start_time = time.time()
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
         embed_pos = self.embed_positions(input)
         embed_pos = embed_pos.to(inputs_embeds.device)
+        embeding_time = time.time() - start_time
+        loggingg.info(f"Embedding time: {embeding_time:.6f}s")
 
         hidden_states = inputs_embeds + embed_pos
         hidden_states = self.layernorm_embedding(hidden_states)

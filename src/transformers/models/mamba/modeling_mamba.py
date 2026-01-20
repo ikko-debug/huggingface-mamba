@@ -139,9 +139,15 @@ class MambaMixer(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.LongTensor] = None,
     ):
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
         # 1. Gated MLP's linear projection
+        start_event.record()
         projected_states = self.in_proj(hidden_states).transpose(1, 2)
-
+        end_event.record()
+        torch.cuda.synchronize()
+        logger.info(f"[Layer {self.layer_idx}] in_proj inference time: {start_event.elapsed_time(end_event):.3f} ms")
+        
         if self.training and cache_params is None:  # Doesn't support outputting the states -> used for training
             contextualized_states = mamba_inner_fn(
                 projected_states,
@@ -164,8 +170,8 @@ class MambaMixer(nn.Module):
 
             if attention_mask is not None:
                 hidden_states = hidden_states * attention_mask.unsqueeze(1)
-
             # 2. Convolution sequence transformation
+            start_event.record()
             conv_weights = self.conv1d.weight.view(self.conv1d.weight.size(0), self.conv1d.weight.size(2))
             if cache_params is not None and cache_position[0] > 0:
                 hidden_states = causal_conv1d_update(
@@ -185,12 +191,16 @@ class MambaMixer(nn.Module):
                 hidden_states = causal_conv1d_fn(
                     hidden_states, conv_weights, self.conv1d.bias, activation=self.activation
                 )
-
+            end_event.record()
+            torch.cuda.synchronize()
+            logger.info(f"[Layer {self.layer_idx}] Convolution sequence transformation time: {start_event.elapsed_time(end_event):.3f} ms")
             if attention_mask is not None:
                 hidden_states = hidden_states * attention_mask.unsqueeze(1)
 
+
             # 3. State Space Model sequence transformation
             # 3.a. input varying initialization of time_step, B and C
+            start_event.record()
             ssm_parameters = self.x_proj(hidden_states.transpose(1, 2))
             time_step, B, C = torch.split(
                 ssm_parameters, [self.time_step_rank, self.ssm_state_size, self.ssm_state_size], dim=-1
@@ -198,7 +208,12 @@ class MambaMixer(nn.Module):
             discrete_time_step = self.dt_proj.weight @ time_step.transpose(1, 2)
 
             A = -torch.exp(self.A_log.float())
+            end_event.record()
+            torch.cuda.synchronize()
+            logger.info(f"[Layer {self.layer_idx}] SSM parameters time: {start_event.elapsed_time(end_event):.3f} ms")
+
             # 3.c perform the recurrence y ← SSM(A, B, C)(x)
+            start_event.record()
             time_proj_bias = self.dt_proj.bias.float() if hasattr(self.dt_proj, "bias") else None
             if cache_params is not None and cache_position[0] > 0:
                 scan_outputs = selective_state_update(
@@ -228,9 +243,15 @@ class MambaMixer(nn.Module):
                 )
                 if ssm_state is not None and cache_params is not None:
                     cache_params.update_ssm_state(self.layer_idx, ssm_state)
-
+            end_event.record()
+            torch.cuda.synchronize()
+            logger.info(f"[Layer {self.layer_idx}] selective_state_update: {start_event.elapsed_time(end_event):.3f} ms")
             # 4. Final linear projection
+            start_event.record()
             contextualized_states = self.out_proj(scan_outputs.transpose(1, 2))
+            end_event.record()
+            torch.cuda.synchronize()
+            logger.info(f"[Layer {self.layer_idx}] out_proj time: {start_event.elapsed_time(end_event):.3f} ms")
         return contextualized_states
 
     # fmt: off
@@ -364,7 +385,14 @@ class MambaBlock(nn.Module):
         attention_mask: Optional[torch.LongTensor] = None,
     ):
         residual = hidden_states
+        #归一化计时
+        start_event_norm = torch.cuda.Event(enable_timing=True)
+        end_event_norm = torch.cuda.Event(enable_timing=True)
+        start_event_norm.record()
         hidden_states = self.norm(hidden_states.to(dtype=self.norm.weight.dtype))
+        end_event_norm.record()
+        torch.cuda.synchronize()
+        logger.info(f"[Layer {self.layer_idx}] RMSNorm time: {start_event_norm.elapsed_time(end_event_norm):.3f} ms")
         if self.residual_in_fp32:
             residual = residual.to(torch.float32)
 

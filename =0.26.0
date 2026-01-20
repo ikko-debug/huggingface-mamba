@@ -1,0 +1,26 @@
+Collecting accelerate
+  Downloading accelerate-1.2.1-py3-none-any.whl (336 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 336.4/336.4 kB 1.2 MB/s eta 0:00:00
+Requirement already satisfied: huggingface-hub>=0.21.0 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (0.27.1)
+Requirement already satisfied: packaging>=20.0 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (23.0)
+Requirement already satisfied: numpy<3.0.0,>=1.17 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (1.24.3)
+Requirement already satisfied: torch>=1.10.0 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (2.0.1)
+Requirement already satisfied: pyyaml in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (6.0.2)
+Requirement already satisfied: safetensors>=0.4.3 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (0.5.1)
+Requirement already satisfied: psutil in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from accelerate) (5.9.0)
+Requirement already satisfied: requests in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from huggingface-hub>=0.21.0->accelerate) (2.32.3)
+Requirement already satisfied: filelock in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from huggingface-hub>=0.21.0->accelerate) (3.9.0)
+Requirement already satisfied: tqdm>=4.42.1 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from huggingface-hub>=0.21.0->accelerate) (4.66.5)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from huggingface-hub>=0.21.0->accelerate) (4.5.0)
+Requirement already satisfied: fsspec>=2023.5.0 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from huggingface-hub>=0.21.0->accelerate) (2024.9.0)
+Requirement already satisfied: jinja2 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from torch>=1.10.0->accelerate) (3.1.2)
+Requirement already satisfied: sympy in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from torch>=1.10.0->accelerate) (1.11.1)
+Requirement already satisfied: networkx in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from torch>=1.10.0->accelerate) (2.8.4)
+Requirement already satisfied: MarkupSafe>=2.0 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from jinja2->torch>=1.10.0->accelerate) (2.1.1)
+Requirement already satisfied: charset-normalizer<4,>=2 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from requests->huggingface-hub>=0.21.0->accelerate) (2.0.4)
+Requirement already satisfied: certifi>=2017.4.17 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from requests->huggingface-hub>=0.21.0->accelerate) (2024.12.14)
+Requirement already satisfied: idna<4,>=2.5 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from requests->huggingface-hub>=0.21.0->accelerate) (3.4)
+Requirement already satisfied: urllib3<3,>=1.21.1 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from requests->huggingface-hub>=0.21.0->accelerate) (1.26.15)
+Requirement already satisfied: mpmath>=0.19 in /home/share/HDstorage/xyc/envs/fair/lib/python3.9/site-packages (from sympy->torch>=1.10.0->accelerate) (1.2.1)
+Installing collected packages: accelerate
+Successfully installed accelerate-1.2.1
